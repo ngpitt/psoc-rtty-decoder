@@ -1,5 +1,6 @@
 #include <project.h>
 #include <stdlib.h>
+
 #define BUFFER_LENGTH 75
 #define BUFFER_WIDTH 100
 #define MIN(a, b) a < b ? a : b
@@ -32,8 +33,8 @@ CY_ISR(BUTTON2_ISR)
 }
 
 void update(unsigned char buffer[BUFFER_LENGTH][BUFFER_WIDTH],
-	unsigned long *lastChange, unsigned long *lastScroll, unsigned long lastBell,
-	int readRow, int *readColumn)
+	unsigned long *lastChange, unsigned long *lastScroll,
+	const unsigned long lastBell, const int readRow, int *readColumn)
 {
 	int i, row, offset, length;
 	
@@ -85,7 +86,7 @@ int main()
 		FigureShift = 27,
 		LetterShift = 31
 	} ControlCodes;
-	static unsigned char LettersTable[] = {
+	const unsigned char LettersTable[] = {
 		' ', 'E', 0, 'A', ' ', 'S', 'I', 'U',
 	  	0, 'D', 'R', 'J', 'N', 'F', 'C', 'K',
 	  	'T', 'Z', 'L', 'W', 'H', 'Y', 'P', 'Q',
@@ -161,7 +162,6 @@ int main()
 				LCD_PrintString("Baud:");
 				LCD_Position(1, 6);
 				LCD_PrintNumber(baud);
-				RESET(lastUpdate);
 			}
 		}
 		else
@@ -170,7 +170,7 @@ int main()
 			{
 				if (InputSignal_Read())
 				{
-					CyDelay(1000 / baud + 1000 / baud / 2);
+					CyDelay(1500 / baud);
 					if (InputSignal_Read())
 					{
 						break;
@@ -196,7 +196,7 @@ int main()
 			}
 			if (!Button1 && !Button2)
 			{
-				CyDelay(1000 / baud / 2);
+				CyDelay(500 / baud);
 				value = 0;
 				for (i = 0; i < 5; i++)
 				{
