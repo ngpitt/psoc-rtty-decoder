@@ -2,8 +2,10 @@
 #include <stdlib.h>
 #define BUFFER_LENGTH 75
 #define BUFFER_WIDTH 100
-#define MIN(a, b) ((a < b) ? a : b)
-#define MAX(a, b) ((a > b) ? a : b)
+#define MIN(a, b) a < b ? a : b
+#define MAX(a, b) a > b ? a : b
+#define ELAPSED(a, b) Millis - a >= b
+#define RESET(a) a = Millis;
 
 typedef enum {
 	false,
@@ -20,13 +22,13 @@ CY_ISR(MILLIS_ISR)
 CY_ISR(BUTTON1_ISR)
 {
 	Button1 = true;
-	Pressed = Millis;
+	RESET(Pressed);
 }
 
 CY_ISR(BUTTON2_ISR)
 {
 	Button2 = true;
-	Pressed = Millis;
+	RESET(Pressed);
 }
 
 void update(unsigned char buffer[BUFFER_LENGTH][BUFFER_WIDTH],
@@ -35,23 +37,23 @@ void update(unsigned char buffer[BUFFER_LENGTH][BUFFER_WIDTH],
 {
 	int i, row, offset, length;
 	
-	if (Millis - lastBell >= 1000)
-	{
-		LED1_Write(0);
-	}
 	length = strlen(buffer[readRow]);
-	if (length > 16 && Millis - *lastChange >= 1000)
+	if (length > 16 && ELAPSED(*lastChange, 1000))
 	{
-		if (*readColumn < length && Millis - *lastScroll >= 100)
+		if (*readColumn < length && ELAPSED(*lastScroll, 100))
 		{
 			*readColumn = *readColumn == 0 ? 17 : *readColumn + 1;
-			*lastScroll = Millis;
+			RESET(*lastScroll);
 		}
-		else if (Millis - *lastScroll >= 1000)
+		else if (ELAPSED(*lastScroll, 1000))
 		{
 			*readColumn = 0;
-			*lastChange = Millis;
+			RESET(*lastChange);
 		}
+	}
+	if (ELAPSED(lastBell, 1000))
+	{
+		LED1_Write(0);
 	}
 	LCD_ClearDisplay();
 	row = readRow - 1;
@@ -118,7 +120,7 @@ int main()
 		}
 		if (settings)
 		{
-			if (Millis - Pressed >= 100)
+			if (ELAPSED(Pressed, 100))
 			{
 				if (Button1)
 				{
@@ -159,7 +161,7 @@ int main()
 				LCD_PrintString("Baud:");
 				LCD_Position(1, 6);
 				LCD_PrintNumber(baud);
-				lastUpdate = Millis;
+				RESET(lastUpdate);
 			}
 		}
 		else
@@ -174,10 +176,10 @@ int main()
 						break;
 					}
 				}
-				else if (Millis - lastUpdate >= 100)
+				else if (ELAPSED(lastUpdate, 100))
 				{
 					update(buffer, &lastChange, &lastScroll, lastBell, readRow, &readColumn);
-					lastUpdate = Millis;
+					RESET(lastUpdate);
 				}
 			}
 			while (!Button1 && !Button2)
@@ -186,10 +188,10 @@ int main()
 				{
 					break;
 				}
-				else if (Millis - lastUpdate >= 100)
+				else if (ELAPSED(lastUpdate, 100))
 				{
 					update(buffer, &lastChange, &lastScroll, lastBell, readRow, &readColumn);
-					lastUpdate = Millis;
+					RESET(lastUpdate);
 				}
 			}
 			if (!Button1 && !Button2)
@@ -241,7 +243,7 @@ int main()
 							if (value == Bell)
 							{
 								LED1_Write(1);
-								lastBell = Millis;
+								RESET(lastBell);
 								break;
 							}
 							buffer[writeRow][writeColumn] = FiguresTable[value];
@@ -251,7 +253,7 @@ int main()
 						readRow = writeRow;
 				}
 			}
-			if (Millis - Pressed >= 100)
+			if (ELAPSED(Pressed, 100))
 			{
 				if (Button1)
 				{
@@ -266,7 +268,7 @@ int main()
 					}
 					readColumn = 0;
 					Button1 = false;
-					lastChange = Millis;
+					RESET(lastChange);
 				}
 				else if (Button2)
 				{
@@ -281,11 +283,11 @@ int main()
 					}
 					readColumn = 0;
 					Button2 = false;
-					lastChange = Millis;
+					RESET(lastChange);
 				}
 			}
 			update(buffer, &lastChange, &lastScroll, lastBell, readRow, &readColumn);
-			lastUpdate = Millis;
+			RESET(lastUpdate);
 		}
     }
 }
