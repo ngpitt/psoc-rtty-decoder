@@ -1,5 +1,7 @@
 #include <project.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 
 #define BUFFER_LENGTH 75
 #define BUFFER_WIDTH 100
@@ -12,8 +14,8 @@ typedef enum {
 	false,
 	true,
 } bool;
-bool Button1 = false, Button2 = false;
-unsigned long Millis = 0, Pressed = 0;
+bool Button1Pressed = false, Button2Pressed = false;
+unsigned long Millis = 0, Button1Timer = 0, Button2Timer = 0;
 
 CY_ISR(MILLIS_ISR)
 {
@@ -22,87 +24,118 @@ CY_ISR(MILLIS_ISR)
 
 CY_ISR(BUTTON1_ISR)
 {
-	Button1 = true;
-	RESET(Pressed);
+	if (ELAPSED(Button1Timer, 100))	{
+		Button1Pressed = true;
+		RESET(Button1Timer);
+	}
 }
 
 CY_ISR(BUTTON2_ISR)
 {
-	Button2 = true;
-	RESET(Pressed);
+	if (ELAPSED(Button2Timer, 100))
+	{
+		Button2Pressed = true;
+		RESET(Button2Timer);
+	}
 }
 
-void update(unsigned char buffer[BUFFER_LENGTH][BUFFER_WIDTH],
-	unsigned long *lastChange, unsigned long *lastScroll,
-	const unsigned long lastBell, const int readRow, int *readColumn)
+void settingsUpdate(char name[], char *value)
 {
-	int i, row, offset, length;
+	int i, length;
 	
-	length = strlen(buffer[readRow]);
-	if (length > 16 && ELAPSED(*lastChange, 1000))
+	LCD_Position(0, 0);
+	LCD_PrintString("--- Settings ---");
+	LCD_Position(1, 0);
+	LCD_PrintString(name);
+	length = strlen(name);
+	LCD_Position(1, length);
+	LCD_PrintString(": ");
+	LCD_Position(1, length + 2);
+	LCD_PrintString(value);
+	for (i = length + 2 + strlen(value); i < 16; i++)
 	{
-		if (*readColumn < length && ELAPSED(*lastScroll, 100))
+		LCD_Position(1, i);
+		LCD_PutChar(' ');
+	}
+}
+
+void decodingUpdate(unsigned char lineBuffer[][BUFFER_WIDTH],
+	unsigned long *changeTimer, unsigned long *scrollTimer,
+	const unsigned long bellTimer, const int readRow, int *readColumn)
+{
+	int i, columnOffset, rowLength;
+	
+	rowLength = strlen(lineBuffer[readRow]);
+	if (rowLength > 16 && ELAPSED(*changeTimer, 1000))
+	{
+		if (*readColumn < rowLength && ELAPSED(*scrollTimer, 100))
 		{
-			*readColumn = *readColumn == 0 ? 17 : *readColumn + 1;
-			RESET(*lastScroll);
+			if (*readColumn == 0)
+			{
+				*readColumn = 17;
+			}
+			else
+			{
+				(*readColumn)++;
+			}
+			RESET(*scrollTimer);
 		}
-		else if (ELAPSED(*lastScroll, 1000))
+		else if (ELAPSED(*scrollTimer, 1000))
 		{
 			*readColumn = 0;
-			RESET(*lastChange);
+			RESET(*changeTimer);
 		}
 	}
-	if (ELAPSED(lastBell, 1000))
+	if (ELAPSED(bellTimer, 1000))
 	{
 		LED1_Write(0);
 	}
 	LCD_ClearDisplay();
-	row = readRow - 1;
-	if (row < 0)
-	{
-		row = BUFFER_LENGTH - 1;
-	}
-	length = MIN(16, strlen(buffer[row]));
-	for (i = 0; i < length; i++)
-	{
-		LCD_Position(0, i);
-		LCD_PutChar(buffer[row][i]);
-	}
-	offset = MAX(0, *readColumn - 16);
-	length = MIN(16, strlen(buffer[readRow]) - offset);
-	for (i = 0; i < length; i++)
+	LCD_Position(0, 0);
+	LCD_PrintString("--- Decoding ---");
+	columnOffset = MAX(0, *readColumn - 16);
+	rowLength = MIN(16, strlen(lineBuffer[readRow]) - columnOffset);
+	for (i = 0; i < rowLength; i++)
 	{
 		LCD_Position(1, i);
-		LCD_PutChar(buffer[readRow][offset + i]);
+		LCD_PutChar(lineBuffer[readRow][columnOffset + i]);
 	}
 }
 
 int main()
 {
 	typedef enum {
+		setBaud,
+		setUnshift,
+		decode,
+	} Mode;
+	typedef enum {
 		LineFeed = 2,
+		Space = 4,
 		CarriageReturn = 8,
 		Bell = 5,
 		FigureShift = 27,
 		LetterShift = 31
-	} ControlCodes;
-	const unsigned char LettersTable[] = {
+	} ControlCode;
+	const unsigned char lettersTable[] = {
 		' ', 'E', 0, 'A', ' ', 'S', 'I', 'U',
 	  	0, 'D', 'R', 'J', 'N', 'F', 'C', 'K',
 	  	'T', 'Z', 'L', 'W', 'H', 'Y', 'P', 'Q',
 	  	'O', 'B', 'G', 0, 'M', 'X', 'V', 0
-	}, FiguresTable[] = {
+	}, figuresTable[] = {
 	 	' ', '3', 0, '-', ' ', 0, '8', '7',
 	  	0, '$', '4', '\'', ',', '!', ':', '(',
 	  	'5', '"', ')', '2', '#', '6', '0', '1',
 	  	'9', '?', '&', 0, '.', '/', ';', 0
 	};
-	bool settings = false;
-	double baud = 50;
-	int i, writeColumn = 0, writeRow = 0, readColumn = 0, readRow = 0, row;
-	unsigned long lastUpdate = 0, lastChange = 0, lastScroll = 0, lastBell = 0;
-	unsigned char value, buffer[BUFFER_LENGTH][BUFFER_WIDTH];
-    ControlCodes shift = LetterShift;
+	Mode mode = setBaud;
+	bool unshift = false;
+	float baud = 45.45;
+	int i, writeColumn = 0, writeRow = 0, readColumn = 0, readRow = 0, tempRow;
+	unsigned long updateTimer = 0, changeTimer = 0, scrollTimer = 0, bellTimer = 0;
+	unsigned char value, lineBuffer[BUFFER_LENGTH][BUFFER_WIDTH];
+	char tempString[6];
+    ControlCode shift = LetterShift;
 	
 	LCD_Start();
 	MillisTimer_Start();
@@ -110,20 +143,29 @@ int main()
 	Button1ISR_StartEx(BUTTON1_ISR);
 	Button2ISR_StartEx(BUTTON2_ISR);
 	CyGlobalIntEnable;
-	memset(buffer, '\0', BUFFER_LENGTH * BUFFER_WIDTH);
+	memset(lineBuffer, '\0', BUFFER_LENGTH * BUFFER_WIDTH);
 	
     while (true)
 	{
-		if (Button1 && Button2)
+		if (Button1Pressed)
 		{
-			settings = !settings;
-			Button1 = Button2 = false;
-		}
-		if (settings)
-		{
-			if (ELAPSED(Pressed, 100))
+			switch (mode)
 			{
-				if (Button1)
+				case setBaud:
+					mode = setUnshift;
+					break;
+				case setUnshift:
+					mode = decode;
+					break;
+				case decode:
+					mode = setBaud;
+			}
+			Button1Pressed = false;
+		}
+		switch (mode)
+		{
+			case setBaud:
+				if (Button2Pressed)
 				{
 					if (baud == 45.45)
 					{
@@ -137,157 +179,139 @@ int main()
 					{
 						baud = 45.45;
 					}
-					Button1 = false;
+					Button2Pressed = false;
 				}
-				else if (Button2)
+				if (ELAPSED(updateTimer, 100))
 				{
-					if (baud == 75)
+					sprintf(tempString, "%2.2f", baud);
+					settingsUpdate("Baud", tempString);
+					RESET(updateTimer);
+				}
+				break;
+			case setUnshift:
+				if (Button2Pressed)
+				{
+					unshift = !unshift;
+					Button2Pressed = false;
+				}
+				if (ELAPSED(updateTimer, 100))
+				{
+					settingsUpdate("Unshift", unshift ? "yes" : "no");
+					RESET(updateTimer);
+				}
+				break;
+			case decode:
+				while (!Button1Pressed && !Button2Pressed)
+				{
+					if (!Signal1_Read())
 					{
-						baud = 50;
-					}
-					else if (baud == 50)
-					{
-						baud = 45.45;
-					}
-					else if (baud == 45.45)
-					{
-						baud = 75;
-					}
-					Button1 = false;
-				}
-				LCD_ClearDisplay();
-				LCD_Position(0, 0);
-				LCD_PrintString("Settings");
-				LCD_Position(1, 0);
-				LCD_PrintString("Baud:");
-				LCD_Position(1, 6);
-				LCD_PrintNumber(baud);
-			}
-		}
-		else
-		{
-			while (!Button1 && !Button2)
-			{
-				if (InputSignal_Read())
-				{
-					CyDelay(1500 / baud);
-					if (InputSignal_Read())
-					{
-						break;
-					}
-				}
-				else if (ELAPSED(lastUpdate, 100))
-				{
-					update(buffer, &lastChange, &lastScroll, lastBell, readRow, &readColumn);
-					RESET(lastUpdate);
-				}
-			}
-			while (!Button1 && !Button2)
-			{
-				if (!InputSignal_Read())
-				{
-					break;
-				}
-				else if (ELAPSED(lastUpdate, 100))
-				{
-					update(buffer, &lastChange, &lastScroll, lastBell, readRow, &readColumn);
-					RESET(lastUpdate);
-				}
-			}
-			if (!Button1 && !Button2)
-			{
-				CyDelay(500 / baud);
-				value = 0;
-				for (i = 0; i < 5; i++)
-				{
-					CyDelay(1000 / baud);
-					value |= InputSignal_Read() << i;
-				}
-				switch(value)
-				{
-					case LineFeed:
-						writeColumn = 0;
-						writeRow++;
-						if (writeRow >= BUFFER_LENGTH)
+						CyDelay(1500 / baud);
+						if (!Signal1_Read())
 						{
-							writeRow = 0;
+							break;
 						}
-						memset(buffer[writeRow], '\0', BUFFER_WIDTH);
+					}
+					else if (ELAPSED(updateTimer, 100))
+					{
+						decodingUpdate(lineBuffer, &changeTimer, &scrollTimer, bellTimer, readRow, &readColumn);
+						RESET(updateTimer);
+					}
+				}
+				while (!Button1Pressed && !Button2Pressed)
+				{
+					if (Signal1_Read())
+					{
 						break;
-					case CarriageReturn:
-						writeColumn = 0;
-						break;
-					case LetterShift:
-						shift = LetterShift;
-						break;
-					case FigureShift:
-						shift = FigureShift;
-						break;
-					default:
-						if (writeColumn >= BUFFER_WIDTH - 1)
-						{
-							writeColumn = 0;
+					}
+					else if (ELAPSED(updateTimer, 100))
+					{
+						decodingUpdate(lineBuffer, &changeTimer, &scrollTimer, bellTimer, readRow, &readColumn);
+						RESET(updateTimer);
+					}
+				}
+				if (!Button1Pressed && !Button2Pressed)
+				{
+					CyDelay(500 / baud);
+					value = 0;
+					for (i = 0; i < 5; i++)
+					{
+						CyDelay(1000 / baud);
+						value |= !Signal1_Read() << i;
+					}
+					switch(value)
+					{
+						case LineFeed:
 							writeRow++;
 							if (writeRow >= BUFFER_LENGTH)
 							{
 								writeRow = 0;
 							}
-							memset(buffer[writeRow], '\0', BUFFER_WIDTH);
-						}
-						if (shift == LetterShift)
-						{
-							buffer[writeRow][writeColumn] = LettersTable[value];
-						}
-						else
-						{
-							if (value == Bell)
+							memset(lineBuffer[writeRow], '\0', BUFFER_WIDTH);
+							break;
+						case CarriageReturn:
+							writeColumn = 0;
+							break;
+						case LetterShift:
+							shift = LetterShift;
+							break;
+						case FigureShift:
+							shift = FigureShift;
+							break;
+						default:
+							if (writeColumn >= BUFFER_WIDTH - 1)
 							{
-								LED1_Write(1);
-								RESET(lastBell);
-								break;
+								writeColumn = 0;
+								writeRow++;
+								if (writeRow >= BUFFER_LENGTH)
+								{
+									writeRow = 0;
+								}
+								memset(lineBuffer[writeRow], '\0', BUFFER_WIDTH);
 							}
-							buffer[writeRow][writeColumn] = FiguresTable[value];
-						}
-						writeColumn++;
-						readColumn = writeColumn;
+							if (shift == LetterShift)
+							{
+								lineBuffer[writeRow][writeColumn] = lettersTable[value];
+							}
+							else if (shift == FigureShift)
+							{
+								if (value == Bell)
+								{
+									LED1_Write(1);
+									RESET(bellTimer);
+									break;
+								}
+								lineBuffer[writeRow][writeColumn] = figuresTable[value];
+							}
+							if (unshift && value == Space)
+							{
+								shift = LetterShift;
+							}
+							writeColumn++;
+							readColumn = writeColumn;
+							readRow = writeRow;
+					}
+				}
+				if (Button2Pressed)
+				{
+					tempRow = readRow - 1;
+					if (tempRow < 0)
+					{
+						tempRow = BUFFER_LENGTH - 1;
+					}
+					if (strlen(lineBuffer[tempRow]))
+					{
+						readRow = tempRow;
+					}
+					else
+					{
 						readRow = writeRow;
-				}
-			}
-			if (ELAPSED(Pressed, 100))
-			{
-				if (Button1)
-				{
-					row = readRow - 1;
-					if (row < 0)
-					{
-						row = BUFFER_LENGTH - 1;
-					}
-					if (strlen(buffer[row]))
-					{
-						readRow = row;
 					}
 					readColumn = 0;
-					Button1 = false;
-					RESET(lastChange);
+					Button2Pressed = false;
+					RESET(changeTimer);
 				}
-				else if (Button2)
-				{
-					row = readRow + 1;
-					if (row >= BUFFER_LENGTH)
-					{
-						row = 0;
-					}
-					if (strlen(buffer[row]))
-					{
-						readRow = row;
-					}
-					readColumn = 0;
-					Button2 = false;
-					RESET(lastChange);
-				}
-			}
-			update(buffer, &lastChange, &lastScroll, lastBell, readRow, &readColumn);
-			RESET(lastUpdate);
+				decodingUpdate(lineBuffer, &changeTimer, &scrollTimer, bellTimer, readRow, &readColumn);
+				RESET(updateTimer);
 		}
     }
 }
